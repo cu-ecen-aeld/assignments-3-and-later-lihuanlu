@@ -31,7 +31,7 @@ int main (int argc, char *argv[])
 		printf("Usage: %s /path/filename writestr.\n", argv[0]);
 		syslog(LOG_ERR, "File directory or write string missing.\n");
 		syslog(LOG_ERR, "Usage: %s /path/filename writestr.\n", argv[0]);
-		exit(-1);
+		exit(1);
 	}
 	else{
         snprintf(filename, sizeof(filename), "%s", argv[1]);
@@ -44,7 +44,7 @@ int main (int argc, char *argv[])
     if (fd == -1){
 		perror("open");
 		syslog(LOG_ERR, "open");
-		exit(-1);
+		exit(1);
 	}
     
 	// Write string to file.
@@ -52,7 +52,7 @@ int main (int argc, char *argv[])
     if (ret == -1){
 		perror("write");
 		syslog(LOG_ERR, "write");
-		exit(-1);
+		exit(1);
 	}
 
     syslog(LOG_DEBUG, "Writing %s to %s.\n", writestr, filename);
@@ -61,7 +61,7 @@ int main (int argc, char *argv[])
     if (close(fd) == -1){
         perror ("close");
 		syslog(LOG_ERR, "close");
-		exit(-1);
+		exit(1);
 	}
 	
 	return 0;
