@@ -1,3 +1,10 @@
+#define _XOPEN_SOURCE /* if we want WEXITSTATUS, etc. */
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <fcntl.h> // open(2)
+
 #include "systemcalls.h"
 
 /**
@@ -16,6 +23,10 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    if (system(cmd)){
+		perror("system");
+		return false;
+	}
 
     return true;
 }
@@ -45,24 +56,38 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
+    int status;
+    pid_t pid;
+	
+	pid = fork();
+	
+	if (pid == -1){ // error
+		perror ("fork");
+		return false;
+	}
+	else if (!pid){ // is child
+	    execv(command[0], command);
+		perror("execv");
+		
+		exit(-1);
+		//_exit(127); // exit immediately, suggested by ChatGPT
+	}
+	
+	if (waitpid(pid, &status, 0) == -1){
+        va_end(args);
+		perror("waitpid");
+		return false;
+	}
+	
+	va_end(args);
+	
+	if (WIFEXITED (status) && WEXITSTATUS (status) == 0) // exit normally (by calling exit() or return from main)
+        return true;                                     // without error status
 
-    va_end(args);
-
-    return true;
+	return false;
 }
+
 
 /**
 * @param outputfile - The full path to the file to write with command output.
@@ -82,7 +107,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 
 /*
@@ -93,7 +118,44 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
-    va_end(args);
+    int status;
+    pid_t pid;
+	
+	pid = fork();
+	
+	if (pid == -1){ // error
+		perror ("fork");
+		return false;
+	}
+	else if (!pid){ // is child
+	    // Create the outputfile
+	    int fd = open(outputfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		if (fd == -1){
+			perror("open");
+			return false;
+		}
+		
+        if (dup2(fd, 1) == -1){ //stdout		
+			perror("dup2");
+			close(fd);
+			return false;		
+		}
+		
+	    execv(command[0], command);
+		close(fd);
+		return false; // False if execv fails. execv does not return if succeeded.
+	}
+	
+	if (waitpid(pid, &status, 0) == -1){
+        va_end(args);
+		perror("waitpid");
+		return false;
+	}
+	
+	va_end(args);
+	
+	if (WIFEXITED (status) && WEXITSTATUS (status) == 0) // exit normally (by calling exit() or return from main)
+        return true;                                     // without error status
 
-    return true;
+	return false;
 }
