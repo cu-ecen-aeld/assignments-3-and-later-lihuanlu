@@ -19,6 +19,6 @@ then
 	exit 1
 fi
 
-NUMFILES=$( ls $FILESDIR | wc -l )
+NUMFILES=$( find $FILESDIR -type f | wc -l )
 MATCHLINES=$( grep -r "$SEARCHSTR" $FILESDIR | wc -l )
 echo "The number of files are $NUMFILES and the number of matching lines are $MATCHLINES."
