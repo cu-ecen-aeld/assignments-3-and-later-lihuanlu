@@ -205,6 +205,7 @@ void *socketThread(void *arg)
 			pthread_mutex_unlock(&file_mutex);
 			pthread_exit(NULL);
 		}
+		fsync(wrfd);
 /*
 		ret = pthread_mutex_unlock(&file_mutex);
 		if (ret){
