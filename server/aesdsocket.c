@@ -152,7 +152,7 @@ void* append_timestamp(void* arg)
 		close(fd);
     }
 	
-	pthread_exit(NULL);
+	return NULL;
 }
 
 
@@ -185,7 +185,6 @@ void *socketThread(void *arg)
 		if (ret_byte == -1){
 			perror("recv");
 			syslog(LOG_ERR, "recv");
-			//pthread_exit(NULL);
 			return NULL;
 		}
 		// Appends to file 1 byte at a time
@@ -196,7 +195,6 @@ void *socketThread(void *arg)
         ret = pthread_mutex_lock(&file_mutex);		
 		if (ret){
 		    perror("pthread_mutex_lock");
-		    //pthread_exit(NULL);
 			return NULL;
 		}
 		
@@ -205,18 +203,9 @@ void *socketThread(void *arg)
 			perror("write");
 			syslog(LOG_ERR, "write");
 			pthread_mutex_unlock(&file_mutex);
-			//pthread_exit(NULL);
 			return NULL;
 		}
-		//fsync(wrfd);
-/*
-		ret = pthread_mutex_unlock(&file_mutex);
-		if (ret){
-		    perror("pthread_mutex_lock");
-		    pthread_exit(NULL);
-		}		
-        // Unlock file
-*/		
+	
 		if (!send_enable) continue; // keep receiving
 		else {                      // send whole file		
 			rdfd = open(filename, O_RDONLY);
@@ -225,7 +214,6 @@ void *socketThread(void *arg)
 				syslog(LOG_ERR, "open");
 				pthread_mutex_unlock(&file_mutex);
 				return NULL;
-				//pthread_exit(NULL);
 			}
 
 			while ((ret_byte = read(rdfd, send_buf, sizeof(send_buf))) > 0){
@@ -233,7 +221,6 @@ void *socketThread(void *arg)
 					perror("read");
 					syslog(LOG_ERR, "read");
 					pthread_mutex_unlock(&file_mutex);
-					//pthread_exit(NULL);
 					return NULL;
 				}
 					
@@ -243,20 +230,18 @@ void *socketThread(void *arg)
 					perror("send");
 					syslog(LOG_ERR, "send");
 					pthread_mutex_unlock(&file_mutex);
-					//pthread_exit(NULL);;
 					return NULL;
 				}
 			}
 			close(rdfd);
 			send_enable = 0;
-			/*
+			
 			ret = pthread_mutex_unlock(&file_mutex);
 		    if (ret){
 		        perror("pthread_mutex_lock");
 		        pthread_exit(NULL);
 		    }		
             // Unlock file
-			*/
 		}
 	}
 		
@@ -266,12 +251,10 @@ void *socketThread(void *arg)
 	if (close(thread_data->client_fd)){
 		perror("close");
 		syslog(LOG_ERR, "close failed.");
-		//pthread_exit(NULL);
 		return NULL;
 	}
 	
 	thread_data->thread_complete = true;
-	//pthread_exit(NULL);
 	return NULL;
 }
 
