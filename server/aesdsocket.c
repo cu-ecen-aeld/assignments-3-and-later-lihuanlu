@@ -185,7 +185,8 @@ void *socketThread(void *arg)
 		if (ret_byte == -1){
 			perror("recv");
 			syslog(LOG_ERR, "recv");
-			pthread_exit(NULL);
+			//pthread_exit(NULL);
+			return NULL;
 		}
 		// Appends to file 1 byte at a time
 		bytes_to_wr = ret_byte;
@@ -195,7 +196,8 @@ void *socketThread(void *arg)
         ret = pthread_mutex_lock(&file_mutex);		
 		if (ret){
 		    perror("pthread_mutex_lock");
-		    pthread_exit(NULL);
+		    //pthread_exit(NULL);
+			return NULL;
 		}
 		
 		ret_byte = write(wrfd, recv_buf, bytes_to_wr);
@@ -203,9 +205,10 @@ void *socketThread(void *arg)
 			perror("write");
 			syslog(LOG_ERR, "write");
 			pthread_mutex_unlock(&file_mutex);
-			pthread_exit(NULL);
+			//pthread_exit(NULL);
+			return NULL;
 		}
-		fsync(wrfd);
+		//fsync(wrfd);
 /*
 		ret = pthread_mutex_unlock(&file_mutex);
 		if (ret){
@@ -221,7 +224,8 @@ void *socketThread(void *arg)
 				perror("open");
 				syslog(LOG_ERR, "open");
 				pthread_mutex_unlock(&file_mutex);
-				pthread_exit(NULL);
+				return NULL;
+				//pthread_exit(NULL);
 			}
 
 			while ((ret_byte = read(rdfd, send_buf, sizeof(send_buf))) > 0){
@@ -229,7 +233,8 @@ void *socketThread(void *arg)
 					perror("read");
 					syslog(LOG_ERR, "read");
 					pthread_mutex_unlock(&file_mutex);
-					pthread_exit(NULL);
+					//pthread_exit(NULL);
+					return NULL;
 				}
 					
 				bytes_to_send = ret_byte;
@@ -238,18 +243,20 @@ void *socketThread(void *arg)
 					perror("send");
 					syslog(LOG_ERR, "send");
 					pthread_mutex_unlock(&file_mutex);
-					pthread_exit(NULL);;
+					//pthread_exit(NULL);;
+					return NULL;
 				}
 			}
 			close(rdfd);
 			send_enable = 0;
-			
+			/*
 			ret = pthread_mutex_unlock(&file_mutex);
 		    if (ret){
 		        perror("pthread_mutex_lock");
 		        pthread_exit(NULL);
 		    }		
             // Unlock file
+			*/
 		}
 	}
 		
@@ -259,11 +266,13 @@ void *socketThread(void *arg)
 	if (close(thread_data->client_fd)){
 		perror("close");
 		syslog(LOG_ERR, "close failed.");
-		pthread_exit(NULL);
+		//pthread_exit(NULL);
+		return NULL;
 	}
 	
 	thread_data->thread_complete = true;
-	pthread_exit(NULL);
+	//pthread_exit(NULL);
+	return NULL;
 }
 
 /**********************************************************************************
@@ -340,7 +349,7 @@ int main(int argc, char **argv)
             exit(1);
 	    }
 	    if (pid > 0){
-			printf("Start in daemon mode.\n");
+			printf("Start in daemon\n");
 			exit(0); // parent exit
 		}
 	}
