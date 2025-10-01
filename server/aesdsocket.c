@@ -205,14 +205,14 @@ void *socketThread(void *arg)
 			pthread_mutex_unlock(&file_mutex);
 			pthread_exit(NULL);
 		}
-		
+/*
 		ret = pthread_mutex_unlock(&file_mutex);
 		if (ret){
 		    perror("pthread_mutex_lock");
 		    pthread_exit(NULL);
 		}		
         // Unlock file
-		
+*/		
 		if (!send_enable) continue; // keep receiving
 		else {                      // send whole file		
 			rdfd = open(filename, O_RDONLY);
@@ -242,6 +242,13 @@ void *socketThread(void *arg)
 			}
 			close(rdfd);
 			send_enable = 0;
+			
+			ret = pthread_mutex_unlock(&file_mutex);
+		    if (ret){
+		        perror("pthread_mutex_lock");
+		        pthread_exit(NULL);
+		    }		
+            // Unlock file
 		}
 	}
 		
@@ -332,7 +339,7 @@ int main(int argc, char **argv)
             exit(1);
 	    }
 	    if (pid > 0){
-			printf("Start in daemon.\n");
+			printf("Start in daemon mode.\n");
 			exit(0); // parent exit
 		}
 	}
