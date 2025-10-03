@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <time.h>
+#include <errno.h>
 
 // Socket
 #include <sys/types.h>
@@ -65,23 +66,8 @@ pthread_t timestamp_id;
  **********************************************************************************/
 void signal_handler(int signo)
 {
-    printf("Caught signal %d, exiting\n", signo);
-	syslog(LOG_DEBUG, "Caught signal, exiting\n");
-	
-	terminate = 1;
-	
-	if (sockfd != -1) close(sockfd);
-    if (new_sockfd != -1) close(new_sockfd);
-    if (wrfd != -1) close(wrfd);
-	
-	if (remove(filename)){
-		perror("remove");
-		syslog(LOG_ERR, "remove file failed.");
-		exit(1);
-	}
-	
-	// join timestamp thread
-	pthread_join(timestamp_id, NULL);
+    if (signo == SIGTERM || signo == SIGINT)
+		terminate = 1;
 }
 
 /**********************************************************************************
@@ -113,6 +99,7 @@ void* append_timestamp(void* arg)
 	
 	while (!terminate){
 		sleep(10);
+		if (terminate) break;
 		
 	    // Get wall time	
         time (&rawtime);
@@ -352,10 +339,11 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 	
-	while (1){
+	while (!terminate){
 		addr_size = sizeof(client_addr);
 		new_sockfd = accept(sockfd, (struct sockaddr *)&client_addr, &addr_size); // return new file descriptor
 		if (new_sockfd == -1){
+			if (errno == EINTR && terminate) break; // Signal caught
 			perror("accept");
 			syslog(LOG_ERR, "accept failed.");
 			exit(1);
@@ -403,5 +391,20 @@ int main(int argc, char **argv)
         }
 	}
 	
+	printf("Caught signal, exiting\n");
+	syslog(LOG_DEBUG, "Caught signal, exiting\n");
+			
+	if (sockfd != -1) close(sockfd);
+	if (new_sockfd != -1) close(new_sockfd);
+	if (wrfd != -1) close(wrfd);
+		
+	if (remove(filename)){
+		perror("remove");
+		syslog(LOG_ERR, "remove file failed.");
+	}
+		
+	// join timestamp thread
+	pthread_join(timestamp_id, NULL);
+		
     return 0;
 }
