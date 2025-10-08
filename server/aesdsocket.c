@@ -1,33 +1,60 @@
  /**********************************************************************************
  * @file    aesdsocket.c
- * @brief   Assignment 5 part 1.
+ * @brief   Assignment 6 part 1.
  *
  * @author        <Li-Huan Lu>
- * @date          <09/20/2025>
+ * @date          <09/29/2025>
  * @reference     Linux manual page
  *                Lecture pdf
  *                https://beej.us/guide/bgnet/html/
+ *                https://nxmnpg.lemoda.net/3/SLIST_FOREACH_SAFE
+ *                https://github.com/stockrt/queue.h/blob/master/sample.c
  ***********************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <syslog.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
+#include <time.h>
+#include <errno.h>
 
+// Socket
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 
+// Pthread
+#include <pthread.h>
+#include <sys/queue.h>
+
 #define LISTEN_BACKLOG 50   // From linux manual page
 #define BUFF_SIZE      1024
 
+typedef struct slist_thread_s{
+	pthread_t thread_id;
+	int client_fd;
+	char client_ip[INET_ADDRSTRLEN];
+	bool thread_complete;
+	
+	SLIST_ENTRY(slist_thread_s) entries;
+} slist_thread_t;
+
+SLIST_HEAD(slisthead, slist_thread_s) head;
+
+
+pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 const char filename[] = "/var/tmp/aesdsocketdata";
 int sockfd, new_sockfd;
-int wrfd, rdfd;
-	
+int wrfd;
+volatile int terminate = 0;
+
+pthread_t timestamp_id;
+
 /**********************************************************************************
  * @name       signal_handler()
  *
@@ -39,19 +66,8 @@ int wrfd, rdfd;
  **********************************************************************************/
 void signal_handler(int signo)
 {
-    printf("Caught signal %d, exiting\n", signo);
-	syslog(LOG_DEBUG, "Caught signal, exiting\n");
-	
-	if (sockfd != -1) close(sockfd);
-    if (new_sockfd != -1) close(new_sockfd);
-    if (wrfd != -1) close(wrfd);
-	if (rdfd != -1) close(rdfd);
-	
-	if (remove(filename)){
-		perror("remove");
-		syslog(LOG_ERR, "remove file failed.");
-		exit(1);
-	}
+    if (signo == SIGTERM || signo == SIGINT)
+		terminate = 1;
 }
 
 /**********************************************************************************
@@ -70,25 +86,182 @@ void set_signal(void)
 }
 
 /**********************************************************************************
+ * @name       append_timestamp()       
+ **********************************************************************************/
+void* append_timestamp(void* arg)
+{
+	int ret;
+	ssize_t ret_byte;
+	time_t rawtime;
+    struct tm * timeinfo;
+    char buffer [80];
+    int fd;
+	
+	while (!terminate){
+		sleep(10);
+		if (terminate) break;
+		
+	    // Get wall time	
+        time (&rawtime);
+        timeinfo = localtime (&rawtime);
+        strftime(buffer, sizeof(buffer), "timestamp:%a %b %d %H:%M:%S %Y\n", timeinfo);
+	
+	    // Lock file
+        ret = pthread_mutex_lock(&file_mutex);		
+        if (ret){
+		    perror("pthread_mutex_lock");
+		    exit(1);
+        }
+	
+		fd = open(filename, O_WRONLY | O_APPEND | O_CREAT, 0664);
+		if (fd == -1){
+			perror("open");
+			syslog(LOG_ERR, "open");
+			exit(1);
+		}
+	
+		// Append	
+		ret_byte = write(fd, buffer, strlen(buffer));
+		if (ret_byte != strlen(buffer)){
+			perror("write");
+			syslog(LOG_ERR, "write");
+			pthread_mutex_unlock(&file_mutex);
+			exit(1);
+		}
+			
+		ret = pthread_mutex_unlock(&file_mutex);
+		if (ret){
+			perror("pthread_mutex_lock");
+			exit(1);
+		}
+		// Unlock file
+		
+		close(fd);
+    }
+	
+	return NULL;
+}
+
+
+/**********************************************************************************
+ * @name       socketThread()
+ *
+ * @brief      { Socket thread for send and receive. }
+ *
+ * @param[in]  threadp { Pointer to thread parameter }
+ * 
+ * @return     None 
+ **********************************************************************************/
+void *socketThread(void *arg)
+{	
+	// Return code
+	int ret;
+	ssize_t ret_byte, bytes_to_wr, bytes_to_send;
+	// Buffer
+	char recv_buf[BUFF_SIZE];
+	char send_buf[BUFF_SIZE];
+	// Flags
+    int send_enable = 0;
+	// FD
+	int rdfd;
+	
+	slist_thread_t *thread_data = (slist_thread_t *)arg;
+	
+    // Receives data over the connection, until client closes connection, return 0
+    while ((ret_byte = recv(thread_data->client_fd, recv_buf, sizeof(recv_buf), 0)) > 0){
+		if (ret_byte == -1){
+			perror("recv");
+			syslog(LOG_ERR, "recv");
+			return NULL;
+		}
+		// Appends to file 1 byte at a time
+		bytes_to_wr = ret_byte;
+		if (recv_buf[bytes_to_wr-1] == '\n') send_enable = 1;
+		
+		// Lock file
+        ret = pthread_mutex_lock(&file_mutex);		
+		if (ret){
+		    perror("pthread_mutex_lock");
+			return NULL;
+		}
+		
+		ret_byte = write(wrfd, recv_buf, bytes_to_wr);
+		if (ret_byte == -1){
+			perror("write");
+			syslog(LOG_ERR, "write");
+			pthread_mutex_unlock(&file_mutex);
+			return NULL;
+		}
+	
+		if (!send_enable) continue; // keep receiving
+		else {                      // send whole file		
+			rdfd = open(filename, O_RDONLY);
+			if (rdfd == -1){
+				perror("open");
+				syslog(LOG_ERR, "open");
+				pthread_mutex_unlock(&file_mutex);
+				return NULL;
+			}
+
+			while ((ret_byte = read(rdfd, send_buf, sizeof(send_buf))) > 0){
+				if (ret_byte == -1){
+					perror("read");
+					syslog(LOG_ERR, "read");
+					pthread_mutex_unlock(&file_mutex);
+					return NULL;
+				}
+					
+				bytes_to_send = ret_byte;
+				ret_byte = send(thread_data->client_fd, send_buf, bytes_to_send, 0);
+				if (ret_byte == -1){
+					perror("send");
+					syslog(LOG_ERR, "send");
+					pthread_mutex_unlock(&file_mutex);
+					return NULL;
+				}
+			}
+			close(rdfd);
+			send_enable = 0;
+			
+			ret = pthread_mutex_unlock(&file_mutex);
+		    if (ret){
+		        perror("pthread_mutex_lock");
+		        pthread_exit(NULL);
+		    }		
+            // Unlock file
+		}
+	}
+		
+	// Logs message to the syslog “Closed connection from XXX”
+	printf("Closed connection from %s\n", thread_data->client_ip);
+	syslog(LOG_DEBUG, "Closed connection from %s\n", thread_data->client_ip);
+	if (close(thread_data->client_fd)){
+		perror("close");
+		syslog(LOG_ERR, "close failed.");
+		return NULL;
+	}
+	
+	thread_data->thread_complete = true;
+	return NULL;
+}
+
+/**********************************************************************************
  * Main functions        
  **********************************************************************************/
 int main(int argc, char **argv)
 {
 	// Server
 	struct addrinfo hints, *servinfo;
-	char recv_buf[BUFF_SIZE];
-	char send_buf[BUFF_SIZE];
-	//Client
+	// Client
 	struct sockaddr client_addr;
 	socklen_t addr_size;
 	char client_ip[INET_ADDRSTRLEN];
 	// Return code
 	int ret;
-	
-    int send_enable = 0;
+	// Flags
 	int daemon_mode = 0;
-	ssize_t ret_byte, bytes_to_wr, bytes_to_send;
 	
+	SLIST_INIT(&head);
 	
 	// Set up signal
 	set_signal();
@@ -146,7 +319,7 @@ int main(int argc, char **argv)
             exit(1);
 	    }
 	    if (pid > 0){
-			printf("Start in daemon.\n");
+			printf("Start in daemon\n");
 			exit(0); // parent exit
 		}
 	}
@@ -159,10 +332,18 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 	
-	while (1){
+	// Start timestamp thread
+	ret = pthread_create(&timestamp_id, NULL, append_timestamp, NULL);
+	if (ret){
+		perror("pthread_create");
+		exit(1);
+	}
+	
+	while (!terminate){
 		addr_size = sizeof(client_addr);
 		new_sockfd = accept(sockfd, (struct sockaddr *)&client_addr, &addr_size); // return new file descriptor
 		if (new_sockfd == -1){
+			if (errno == EINTR && terminate) break; // Signal caught
 			perror("accept");
 			syslog(LOG_ERR, "accept failed.");
 			exit(1);
@@ -172,63 +353,58 @@ int main(int argc, char **argv)
 		inet_ntop(AF_INET, &client_addr.sa_data, client_ip, sizeof(client_ip));
 		printf("Accepted connection from %s\n", client_ip);
 		syslog(LOG_DEBUG, "Accepted connection from %s\n", client_ip);
-
-        // Receives data over the connection, until client closes connection, return 0
-		while ((ret_byte = recv(new_sockfd, recv_buf, sizeof(recv_buf), 0)) > 0){
-			if (ret_byte == -1){
-				perror("recv");
-				syslog(LOG_ERR, "recv");
-				exit(1);
-			}
-			// Appends to file 1 byte at a time
-			bytes_to_wr = ret_byte;
-			if (recv_buf[bytes_to_wr-1] == '\n') send_enable = 1;
-			
-			ret_byte = write(wrfd, recv_buf, bytes_to_wr);
-			if (ret_byte == -1){
-				perror("write");
-				syslog(LOG_ERR, "write");
-				exit(1);
-			}
-
-			if (!send_enable) continue; // keep receiving
-			else {                      // send whole file
-				rdfd = open(filename, O_RDONLY);
-				if (rdfd == -1){
-					perror("open");
-					syslog(LOG_ERR, "open");
-					exit(1);
-				}
-
-				while ((ret_byte = read(rdfd, send_buf, sizeof(send_buf))) > 0){
-					if (ret_byte == -1){
-						perror("read");
-						syslog(LOG_ERR, "read");
-						exit(1);
-					}
-					
-					bytes_to_send = ret_byte;
-					ret_byte = send(new_sockfd, send_buf, bytes_to_send, 0);
-					if (ret_byte == -1){
-						perror("send");
-						syslog(LOG_ERR, "send");
-						exit(1);
-					}
-				}
-				close(rdfd);
-				send_enable = 0;
-			}
-		}
+        
+		slist_thread_t *thread_node = (slist_thread_t *) malloc(sizeof(slist_thread_t));
 		
-		// Logs message to the syslog “Closed connection from XXX”
-		printf("Closed connection from %s\n", client_ip);
-		syslog(LOG_DEBUG, "Closed connection from %s\n", client_ip);
-		if (close(new_sockfd)){
-			perror("close");
-			syslog(LOG_ERR, "close failed.");
+		thread_node->client_fd = new_sockfd;
+		thread_node->thread_complete = false;
+		strcpy(thread_node->client_ip, client_ip);
+		
+		// Create thread
+		ret = pthread_create(&thread_node->thread_id, NULL, socketThread, thread_node);
+	    if (ret){
+		    perror("pthread_create");
+		    free(thread_node);
+			close(new_sockfd);
+		    //return false;
 			exit(1);
-		}
+	    }
+		
+	    // Insert node to linked list
+		SLIST_INSERT_HEAD(&head, thread_node, entries);
+		
+	    // Check thread_complete and join the thread
+		// Remove node
+		slist_thread_t *var = SLIST_FIRST(&head);
+        slist_thread_t *temp_var;
+
+        while (var != NULL) {
+			temp_var = SLIST_NEXT(var, entries);
+
+			if (var->thread_complete) {
+				pthread_join(var->thread_id, NULL);
+				SLIST_REMOVE(&head, var, slist_thread_s, entries);
+				free(var);
+			}
+
+			var = temp_var;
+        }
 	}
 	
+	printf("Caught signal, exiting\n");
+	syslog(LOG_DEBUG, "Caught signal, exiting\n");
+			
+	if (sockfd != -1) close(sockfd);
+	if (new_sockfd != -1) close(new_sockfd);
+	if (wrfd != -1) close(wrfd);
+		
+	if (remove(filename)){
+		perror("remove");
+		syslog(LOG_ERR, "remove file failed.");
+	}
+		
+	// join timestamp thread
+	pthread_join(timestamp_id, NULL);
+		
     return 0;
 }
