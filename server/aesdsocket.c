@@ -266,6 +266,9 @@ int main(int argc, char **argv)
 	// Set up signal
 	set_signal();
 	
+	// Logging with LOG_USER facility.
+    openlog(NULL, 0, LOG_USER);
+	
 	if (argc == 2 && strcmp(argv[1], "-d") == 0) daemon_mode = 1;
 	
 	// Open file, create if not exist
@@ -284,6 +287,15 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 	
+	// Enable SO_REUSEADDR to allow reuse of the address/port
+    int yes = 1;
+	ret = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    if (ret == -1) {
+        perror("setsockopt");
+        syslog(LOG_ERR, "setsockopt failed.");
+        exit(1);
+    }
+
 	memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC; 
     hints.ai_socktype = SOCK_STREAM;
@@ -315,15 +327,35 @@ int main(int argc, char **argv)
 	
 	    if (pid == -1){ // error
 		    perror ("fork");
-		    syslog(LOG_ERR, "fork failed.");
-            exit(1);
+		    syslog(LOG_ERR, "Fork failed: %s", strerror(errno));
+            return -1;
 	    }
 	    if (pid > 0){
 			printf("Start in daemon\n");
 			exit(0); // parent exit
 		}
 	}
-	
+	// Child process becomes daemon
+    setsid();
+    chdir("/");
+    // Close standard file descriptors
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    // Open /dev/null
+    int fd = open("/dev/null", O_RDWR);
+    if (fd == -1)
+    {
+        syslog(LOG_ERR, "Failed to open /dev/null: %s", strerror(errno));
+        return -1;
+    }
+
+    // Redirect standard file descriptors to /dev/null
+    dup2(fd, STDIN_FILENO);
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+
 	// Listens for and accepts a connection
 	ret = listen(sockfd, LISTEN_BACKLOG);
 	if (ret == -1){
@@ -393,7 +425,26 @@ int main(int argc, char **argv)
 	
 	printf("Caught signal, exiting\n");
 	syslog(LOG_DEBUG, "Caught signal, exiting\n");
-			
+	
+	// Final clean up
+    slist_thread_t *var2 = SLIST_FIRST(&head);
+    slist_thread_t *temp_var2;
+	var2 = SLIST_FIRST(&head);
+	
+    while (var2 != NULL) {
+        temp_var2 = SLIST_NEXT(var2, entries);
+
+        if (pthread_join(var2->thread_id, NULL) != 0) {
+            perror("pthread_join");
+            syslog(LOG_ERR, "pthread_join failed.");
+        }
+
+        SLIST_REMOVE(&head, var2, slist_thread_s, entries);
+        free(var2);
+
+        var2 = temp_var2;
+    }
+	
 	if (sockfd != -1) close(sockfd);
 	if (new_sockfd != -1) close(new_sockfd);
 	if (wrfd != -1) close(wrfd);
@@ -402,7 +453,9 @@ int main(int argc, char **argv)
 		perror("remove");
 		syslog(LOG_ERR, "remove file failed.");
 	}
-		
+	
+    closelog();	
+	
 	// join timestamp thread
 	pthread_join(timestamp_id, NULL);
 		
