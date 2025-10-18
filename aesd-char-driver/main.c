@@ -219,7 +219,12 @@ void aesd_cleanup_module(void)
      * TODO: cleanup AESD specific poritions here as necessary
      */
     // free memories, handle the locking primitives 
-	
+	uint8_t index;
+	struct aesd_buffer_entry *entry;
+	AESD_CIRCULAR_BUFFER_FOREACH(entry,&aesd_device.aesd_cb,index){
+		if (entry->buffptr)
+			kfree(entry->buffptr);
+	}
     unregister_chrdev_region(devno, 1);
 }
 
