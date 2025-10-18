@@ -194,6 +194,13 @@ void *socketThread(void *arg)
 			return NULL;
 		}
 		
+		wrfd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0664);
+		if (wrfd == -1){
+			perror("open");
+			syslog(LOG_ERR, "open");
+			exit(1);
+		}
+	
 		ret_byte = write(wrfd, recv_buf, bytes_to_wr);
 		if (ret_byte == -1){
 			perror("write");
@@ -201,7 +208,8 @@ void *socketThread(void *arg)
 			pthread_mutex_unlock(&file_mutex);
 			return NULL;
 		}
-	
+	    close(wrfd);
+		
 		if (!send_enable) continue; // keep receiving
 		else {                      // send whole file		
 			rdfd = open(filename, O_RDONLY);
@@ -280,13 +288,6 @@ int main(int argc, char **argv)
 	
 	if (argc == 2 && strcmp(argv[1], "-d") == 0) daemon_mode = 1;
 	
-	// Open file, create if not exist
-	wrfd = open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0664);
-    if (wrfd == -1){
-		perror("open");
-		syslog(LOG_ERR, "open");
-		exit(1);
-	}
 	
 	// Opens a stream socket bound to port 9000
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
