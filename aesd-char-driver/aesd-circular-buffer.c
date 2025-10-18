@@ -67,7 +67,7 @@ const char *aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
 {
     if (!buffer || !add_entry){
 		//fprintf(stderr, "aesd_circular_buffer_add_entry: NULL pointer\n");
-		return;
+		return NULL;
 	}
 	
 	const char *rtn_ptr = NULL;
