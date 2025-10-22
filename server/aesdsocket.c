@@ -31,9 +31,18 @@
 #include <pthread.h>
 #include <sys/queue.h>
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1  // default
+#endif
+
 #define LISTEN_BACKLOG 50   // From linux manual page
 #define BUFF_SIZE      1024
 
+#if USE_AESD_CHAR_DEVICE
+    const char filename[] = "/dev/aesdchar";
+#else
+    const char filename[] = "/var/tmp/aesdsocketdata";
+#endif
 typedef struct slist_thread_s{
 	pthread_t thread_id;
 	int client_fd;
@@ -48,13 +57,13 @@ SLIST_HEAD(slisthead, slist_thread_s) head;
 
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-const char filename[] = "/var/tmp/aesdsocketdata";
 int sockfd, new_sockfd;
 int wrfd;
 volatile int terminate = 0;
 
+#if !USE_AESD_CHAR_DEVICE	
 pthread_t timestamp_id;
-
+#endif
 /**********************************************************************************
  * @name       signal_handler()
  *
@@ -185,6 +194,13 @@ void *socketThread(void *arg)
 			return NULL;
 		}
 		
+		wrfd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0664);
+		if (wrfd == -1){
+			perror("open");
+			syslog(LOG_ERR, "open");
+			exit(1);
+		}
+	
 		ret_byte = write(wrfd, recv_buf, bytes_to_wr);
 		if (ret_byte == -1){
 			perror("write");
@@ -192,7 +208,8 @@ void *socketThread(void *arg)
 			pthread_mutex_unlock(&file_mutex);
 			return NULL;
 		}
-	
+	    close(wrfd);
+		
 		if (!send_enable) continue; // keep receiving
 		else {                      // send whole file		
 			rdfd = open(filename, O_RDONLY);
@@ -271,13 +288,6 @@ int main(int argc, char **argv)
 	
 	if (argc == 2 && strcmp(argv[1], "-d") == 0) daemon_mode = 1;
 	
-	// Open file, create if not exist
-	wrfd = open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0664);
-    if (wrfd == -1){
-		perror("open");
-		syslog(LOG_ERR, "open");
-		exit(1);
-	}
 	
 	// Opens a stream socket bound to port 9000
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -363,14 +373,14 @@ int main(int argc, char **argv)
 		syslog(LOG_ERR, "listen failed.");
 		exit(1);
 	}
-	
+#if !USE_AESD_CHAR_DEVICE	
 	// Start timestamp thread
 	ret = pthread_create(&timestamp_id, NULL, append_timestamp, NULL);
 	if (ret){
 		perror("pthread_create");
 		exit(1);
 	}
-	
+#endif	
 	while (!terminate){
 		addr_size = sizeof(client_addr);
 		new_sockfd = accept(sockfd, (struct sockaddr *)&client_addr, &addr_size); // return new file descriptor
@@ -455,9 +465,9 @@ int main(int argc, char **argv)
 	}
 	
     closelog();	
-	
+#if !USE_AESD_CHAR_DEVICE		
 	// join timestamp thread
 	pthread_join(timestamp_id, NULL);
-		
+#endif		
     return 0;
 }

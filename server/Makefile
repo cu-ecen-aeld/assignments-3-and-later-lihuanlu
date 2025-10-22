@@ -1,5 +1,5 @@
 CROSS_COMPILE ?=
-CC ?= $(CROSS_COMPILE)gcc
+CC := $(CROSS_COMPILE)gcc
 CFLAGS ?= -O0 -g -Wall -Werror
 LDFLAGS ?=
 LIBS ?= -lpthread
