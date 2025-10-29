@@ -31,6 +31,9 @@
 #include <pthread.h>
 #include <sys/queue.h>
 
+// aesd ioctl
+#include "../aesd-char-driver/aesd_ioctl.h"
+
 #ifndef USE_AESD_CHAR_DEVICE
 #define USE_AESD_CHAR_DEVICE 1  // default
 #endif
@@ -53,7 +56,6 @@ typedef struct slist_thread_s{
 } slist_thread_t;
 
 SLIST_HEAD(slisthead, slist_thread_s) head;
-
 
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -194,11 +196,64 @@ void *socketThread(void *arg)
 			return NULL;
 		}
 		
+		// Handle ioctl
+		if (strncmp(recv_buf, "AESDCHAR_IOCSEEKTO:", 19) == 0) {
+		    unsigned int write_cmd, offset;
+			
+			if (sscanf(recv_buf, "AESDCHAR_IOCSEEKTO:%u,%u", &write_cmd, &offset) == 2) {
+			    struct aesd_seekto seekto;
+                seekto.write_cmd = write_cmd;
+                seekto.write_cmd_offset = offset;
+				
+				int iofd = open(filename, O_RDWR);
+		        if (iofd == -1){
+			        perror("open");
+			        syslog(LOG_ERR, "open");
+					pthread_mutex_unlock(&file_mutex);
+			        return NULL;
+		        }
+				
+                int result_ret = ioctl(iofd,AESDCHAR_IOCSEEKTO,&seekto);
+			    if (result_ret == -1){
+			        perror("ioctl");
+			        syslog(LOG_ERR, "ioctl");
+					close(iofd);
+					pthread_mutex_unlock(&file_mutex);
+			        return NULL;
+		        }
+				
+				while ((ret_byte = read(iofd, send_buf, sizeof(send_buf))) > 0){
+					if (ret_byte == -1){
+						perror("read");
+						syslog(LOG_ERR, "read");
+						pthread_mutex_unlock(&file_mutex);
+						return NULL;
+					}
+						
+					bytes_to_send = ret_byte;
+					ret_byte = send(thread_data->client_fd, send_buf, bytes_to_send, 0);
+					if (ret_byte == -1){
+						perror("send");
+						syslog(LOG_ERR, "send");
+						close(iofd);
+						pthread_mutex_unlock(&file_mutex);
+						return NULL;
+					}
+			    }
+				
+				close(iofd);
+			}
+			
+			pthread_mutex_unlock(&file_mutex);
+            continue;		
+		}
+		
 		wrfd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0664);
 		if (wrfd == -1){
 			perror("open");
 			syslog(LOG_ERR, "open");
-			exit(1);
+			pthread_mutex_unlock(&file_mutex);
+			return NULL;
 		}
 	
 		ret_byte = write(wrfd, recv_buf, bytes_to_wr);
